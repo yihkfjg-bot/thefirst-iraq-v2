@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>لوحة تحكم — أوائل العراق</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          void: { DEFAULT:'#FFFFFF', alt:'#EFF8FF', card:'#FFFFFF' },
+          purple2: { DEFAULT:'#0284C7', dim:'#075985' },
+          cyan2: { DEFAULT:'#38BDF8', dim:'#0EA5E9' },
+        },
+        fontFamily: { cairo:['Cairo','sans-serif'], tajawal:['Tajawal','sans-serif'] }
+      }
+    }
+  }
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<style>
+  body{ font-family:'Tajawal', sans-serif; background:#F5FBFF; }
+  h1,h2,h3,h4,.font-display{ font-family:'Cairo', sans-serif; }
+  .glass{ background:#FFFFFF; border:1px solid #DCEFFC; box-shadow:0 1px 3px rgba(2,132,199,0.06); }
+  textarea{ resize:vertical; }
+  .drag-handle{ cursor:grab; }
+</style>
+</head>
+<body class="text-slate-700 antialiased">
+
+<!-- LOGIN GATE -->
+<div id="loginScreen" class="min-h-screen flex items-center justify-center p-6">
+  <div class="glass rounded-2xl p-8 max-w-sm w-full">
+    <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-purple2 to-cyan2 flex items-center justify-center mb-4">
+      <i data-lucide="shield-check" class="w-6 h-6 text-white"></i>
+    </div>
+    <h1 class="font-display font-bold text-xl text-slate-800 mb-1">لوحة تحكم أوائل العراق</h1>
+    <p class="text-sm text-slate-500 mb-6">أدخل كلمة سر لوحة التحكم للمتابعة.</p>
+    <input id="passwordInput" type="password" placeholder="كلمة السر"
+      class="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-purple2 mb-3">
+    <div id="loginError" class="hidden text-xs text-red-500 mb-3">كلمة السر غلط، جرب مرة ثانية.</div>
+    <button id="loginBtn" class="w-full bg-gradient-to-l from-purple2 to-cyan2 text-white text-sm font-semibold py-2.5 rounded-lg">دخول</button>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard" class="hidden min-h-screen">
+  <header class="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-100">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-purple2 to-cyan2 flex items-center justify-center">
+          <i data-lucide="layout-dashboard" class="w-4.5 h-4.5 text-white"></i>
+        </div>
+        <div>
+          <div class="font-display font-bold text-slate-800 text-sm leading-none">لوحة التحكم</div>
+          <div class="text-[11px] text-slate-400 mt-0.5">أوائل العراق</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="saveStatus" class="text-xs text-slate-400"></span>
+        <a href="/" target="_blank" class="text-xs text-slate-500 hover:text-purple2 flex items-center gap-1">
+          <i data-lucide="external-link" class="w-3.5 h-3.5"></i> شوف الموقع
+        </a>
+        <button id="saveBtn" class="bg-gradient-to-l from-purple2 to-cyan2 text-white text-sm font-medium px-5 py-2 rounded-lg flex items-center gap-2">
+          <i data-lucide="save" class="w-4 h-4"></i> حفظ التغييرات
+        </button>
+      </div>
+    </div>
+    <div class="max-w-6xl mx-auto px-6 flex gap-6 text-sm border-t border-slate-50">
+      <button data-tab="subjects" class="tab-btn py-3 border-b-2 border-purple2 text-purple2 font-medium">المواد الدراسية</button>
+      <button data-tab="topics" class="tab-btn py-3 border-b-2 border-transparent text-slate-500">الأقسام العامة</button>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    <div id="tab-subjects" class="tab-panel space-y-4"></div>
+    <div id="tab-topics" class="tab-panel hidden space-y-4"></div>
+  </main>
+</div>
+
+<!-- Q&A row template (kept in JS as string, no DOM template needed) -->
+
+<script>
+lucide.createIcons();
+
+const ADMIN_KEY = 'awael_admin_key_v1';
+let content = { subjects: [], topics: [] };
+
+const subjectIconOptions = ["islamic","arabic","english","biology","math","chemistry","physics","french"];
+const topicIconOptions = ["sun","clock","refresh-ccw","circle-alert","heart-pulse","cloud-drizzle","moon","apple","file-text","pencil-ruler","moon-star","sparkles","user-round","school","users","smartphone","book-marked","target","calendar-days","layers","lightbulb","calendar-check","smile"];
+const topicCategories = ["التنظيم اليومي", "الجانب النفسي", "الامتحانات والوزاريات", "البيئة المحيطة"];
+
+/* =================== AUTH =================== */
+function apiHeaders(){
+  return { 'Content-Type':'application/json', 'x-admin-key': sessionStorage.getItem(ADMIN_KEY) || '' };
+}
+
+document.getElementById('loginBtn').addEventListener('click', doLogin);
+document.getElementById('passwordInput').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+
+async function doLogin(){
+  const password = document.getElementById('passwordInput').value;
+  const res = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password}) });
+  if(res.ok){
+    sessionStorage.setItem(ADMIN_KEY, password);
+    await loadContent();
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('dashboard').classList.remove('hidden');
+  } else {
+    document.getElementById('loginError').classList.remove('hidden');
+  }
+}
+
+// If a key is already stored this tab session, skip straight to the dashboard.
+(async function tryAutoLogin(){
+  const key = sessionStorage.getItem(ADMIN_KEY);
+  if(!key) return;
+  const res = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:key}) });
+  if(res.ok){
+    await loadContent();
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('dashboard').classList.remove('hidden');
+  }
+})();
+
+/* =================== LOAD / SAVE =================== */
+async function loadContent(){
+  const res = await fetch('/api/content');
+  content = await res.json();
+  renderSubjectsTab();
+  renderTopicsTab();
+}
+
+document.getElementById('saveBtn').addEventListener('click', async ()=>{
+  const status = document.getElementById('saveStatus');
+  status.textContent = 'جاري الحفظ...';
+  try{
+    const res = await fetch('/api/admin/content', { method:'PUT', headers: apiHeaders(), body: JSON.stringify(content) });
+    if(res.ok){
+      status.textContent = '✓ تم الحفظ — التغييرات فعالة على الموقع الحين';
+      status.classList.remove('text-red-500'); status.classList.add('text-emerald-600');
+    } else {
+      status.textContent = 'صار خطأ بالحفظ، حاول مرة ثانية';
+      status.classList.add('text-red-500');
+    }
+  } catch(e){
+    status.textContent = 'ما قدرنا نوصل للسيرفر';
+    status.classList.add('text-red-500');
+  }
+  setTimeout(()=>{ status.textContent=''; status.classList.remove('text-red-500','text-emerald-600'); }, 4000);
+});
+
+/* =================== TABS =================== */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>{ b.classList.remove('border-purple2','text-purple2','font-medium'); b.classList.add('border-transparent','text-slate-500'); });
+    btn.classList.add('border-purple2','text-purple2','font-medium'); btn.classList.remove('border-transparent','text-slate-500');
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.add('hidden'));
+    document.getElementById('tab-'+btn.dataset.tab).classList.remove('hidden');
+  });
+});
+
+/* =================== SUBJECTS TAB =================== */
+function renderSubjectsTab(){
+  const el = document.getElementById('tab-subjects');
+  el.innerHTML = `
+    <button id="addSubjectBtn" class="w-full border-2 border-dashed border-slate-200 hover:border-purple2 text-slate-500 hover:text-purple2 rounded-xl py-4 text-sm font-medium transition flex items-center justify-center gap-2">
+      <i data-lucide="plus" class="w-4 h-4"></i> إضافة مادة جديدة
+    </button>
+  ` + content.subjects.map((s,si)=> subjectCardHTML(s,si)).join('');
+  lucide.createIcons();
+  document.getElementById('addSubjectBtn').addEventListener('click', ()=>{
+    content.subjects.push({ name:'مادة جديدة', img:'islamic', badge:'من طالب الأول على العراق', qas:[] });
+    renderSubjectsTab();
+  });
+  wireSubjectEvents();
+}
+
+function subjectCardHTML(s, si){
+  const qas = s.qas || (s.tips ? s.tips.map(t=>({q:'', a:t})) : []);
+  return `
+  <div class="glass rounded-2xl p-5" data-si="${si}">
+    <div class="flex items-start gap-4 mb-4">
+      <select data-field="img" data-si="${si}" class="subj-field border border-slate-200 rounded-lg px-2 py-2 text-xs">
+        ${subjectIconOptions.map(o=>`<option value="${o}" ${o===s.img?'selected':''}>${o}</option>`).join('')}
+      </select>
+      <div class="flex-1 grid grid-cols-2 gap-3">
+        <input data-field="name" data-si="${si}" value="${escAttr(s.name)}" placeholder="اسم المادة"
+          class="subj-field border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium">
+        <input data-field="badge" data-si="${si}" value="${escAttr(s.badge||'')}" placeholder="الوسم تحت الجواب"
+          class="subj-field border border-slate-200 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <button class="del-subject text-red-400 hover:text-red-600 p-2" data-si="${si}" title="حذف المادة">
+        <i data-lucide="trash-2" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div class="space-y-2 qa-list" data-si="${si}">
+      ${qas.map((qa,qi)=> qaRowHTML(si, qi, qa.q, qa.a, 'subj')).join('')}
+    </div>
+    <button class="add-qa text-xs text-purple2 hover:underline flex items-center gap-1 mt-3" data-si="${si}" data-kind="subj">
+      <i data-lucide="plus" class="w-3.5 h-3.5"></i> إضافة سؤال
+    </button>
+  </div>`;
+}
+
+function qaRowHTML(si, qi, q, a, kind){
+  return `
+  <div class="border border-slate-100 rounded-lg p-3 qa-row" data-si="${si}" data-qi="${qi}">
+    <div class="flex items-start gap-2">
+      <div class="flex-1 space-y-2">
+        <input data-qfield="q" data-si="${si}" data-qi="${qi}" data-kind="${kind}" value="${escAttr(q)}" placeholder="السؤال"
+          class="qa-field w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm font-medium">
+        <textarea data-qfield="a" data-si="${si}" data-qi="${qi}" data-kind="${kind}" rows="2" placeholder="الجواب"
+          class="qa-field w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm">${escHtml(a)}</textarea>
+      </div>
+      <button class="del-qa text-slate-300 hover:text-red-500 p-1" data-si="${si}" data-qi="${qi}" data-kind="${kind}" title="حذف السؤال">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+  </div>`;
+}
+
+function wireSubjectEvents(){
+  document.querySelectorAll('#tab-subjects .subj-field').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const si = +inp.dataset.si, field = inp.dataset.field;
+      content.subjects[si][field] = inp.value;
+    });
+  });
+  document.querySelectorAll('#tab-subjects .del-subject').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!confirm('تحذف هالمادة بالكامل؟')) return;
+      content.subjects.splice(+btn.dataset.si, 1);
+      renderSubjectsTab();
+    });
+  });
+  document.querySelectorAll('#tab-subjects .add-qa').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const si = +btn.dataset.si;
+      if(!content.subjects[si].qas) content.subjects[si].qas = [];
+      delete content.subjects[si].tips;
+      content.subjects[si].qas.push({ q:'', a:'' });
+      renderSubjectsTab();
+    });
+  });
+  wireQaFields('#tab-subjects', content.subjects, renderSubjectsTab);
+}
+
+/* =================== TOPICS TAB =================== */
+function renderTopicsTab(){
+  const el = document.getElementById('tab-topics');
+  el.innerHTML = `
+    <button id="addTopicBtn" class="w-full border-2 border-dashed border-slate-200 hover:border-cyan2 text-slate-500 hover:text-cyan2 rounded-xl py-4 text-sm font-medium transition flex items-center justify-center gap-2">
+      <i data-lucide="plus" class="w-4 h-4"></i> إضافة موضوع جديد
+    </button>
+  ` + content.topics.map((t,ti)=> topicCardHTML(t,ti)).join('');
+  lucide.createIcons();
+  document.getElementById('addTopicBtn').addEventListener('click', ()=>{
+    content.topics.push({ icon:'sun', title:'موضوع جديد', cat:topicCategories[0], qas:[] });
+    renderTopicsTab();
+  });
+  wireTopicEvents();
+}
+
+function topicCardHTML(t, ti){
+  const qas = t.qas || (t.tip ? [{q:'', a:t.tip}] : []);
+  return `
+  <div class="glass rounded-2xl p-5" data-ti="${ti}">
+    <div class="flex items-start gap-4 mb-4">
+      <select data-field="icon" data-ti="${ti}" class="topic-field border border-slate-200 rounded-lg px-2 py-2 text-xs">
+        ${topicIconOptions.map(o=>`<option value="${o}" ${o===t.icon?'selected':''}>${o}</option>`).join('')}
+      </select>
+      <div class="flex-1 grid grid-cols-2 gap-3">
+        <input data-field="title" data-ti="${ti}" value="${escAttr(t.title)}" placeholder="عنوان الموضوع"
+          class="topic-field border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium">
+        <select data-field="cat" data-ti="${ti}" class="topic-field border border-slate-200 rounded-lg px-3 py-2 text-sm">
+          ${topicCategories.map(c=>`<option value="${c}" ${c===t.cat?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+      <button class="del-topic text-red-400 hover:text-red-600 p-2" data-ti="${ti}" title="حذف الموضوع">
+        <i data-lucide="trash-2" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div class="space-y-2 qa-list" data-ti="${ti}">
+      ${qas.map((qa,qi)=> qaRowHTML(ti, qi, qa.q, qa.a, 'topic')).join('')}
+    </div>
+    <button class="add-qa text-xs text-cyan2 hover:underline flex items-center gap-1 mt-3" data-ti="${ti}" data-kind="topic">
+      <i data-lucide="plus" class="w-3.5 h-3.5"></i> إضافة سؤال
+    </button>
+  </div>`;
+}
+
+function wireTopicEvents(){
+  document.querySelectorAll('#tab-topics .topic-field').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const ti = +inp.dataset.ti, field = inp.dataset.field;
+      content.topics[ti][field] = inp.value;
+    });
+  });
+  document.querySelectorAll('#tab-topics .del-topic').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!confirm('تحذف هالموضوع بالكامل؟')) return;
+      content.topics.splice(+btn.dataset.ti, 1);
+      renderTopicsTab();
+    });
+  });
+  document.querySelectorAll('#tab-topics .add-qa').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const ti = +btn.dataset.ti;
+      if(!content.topics[ti].qas) content.topics[ti].qas = [];
+      delete content.topics[ti].tip;
+      content.topics[ti].qas.push({ q:'', a:'' });
+      renderTopicsTab();
+    });
+  });
+  wireQaFields('#tab-topics', content.topics, renderTopicsTab);
+}
+
+/* =================== SHARED Q&A FIELD WIRING =================== */
+function wireQaFields(scope, list, rerender){
+  document.querySelectorAll(scope + ' .qa-field').forEach(f=>{
+    f.addEventListener('input', ()=>{
+      const idx = +(f.dataset.si ?? f.dataset.ti);
+      const qi = +f.dataset.qi;
+      const field = f.dataset.qfield;
+      if(!list[idx].qas) list[idx].qas = [];
+      if(!list[idx].qas[qi]) list[idx].qas[qi] = {q:'',a:''};
+      list[idx].qas[qi][field] = f.value;
+    });
+  });
+  document.querySelectorAll(scope + ' .del-qa').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = +(btn.dataset.si ?? btn.dataset.ti);
+      const qi = +btn.dataset.qi;
+      list[idx].qas.splice(qi, 1);
+      rerender();
+    });
+  });
+}
+
+/* =================== HELPERS =================== */
+function escAttr(s){ return String(s||'').replace(/"/g,'&quot;'); }
+function escHtml(s){ return String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
