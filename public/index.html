@@ -295,6 +295,9 @@ function openLockModal(){
 }
 
 
+let activePollSessionId = null;
+let pollAttempts = 0;
+
 async function startBotVerification(){
   const statusEl = document.getElementById('tgStatus');
   const btn = document.getElementById('verifyViaBotBtn');
@@ -317,43 +320,60 @@ async function startBotVerification(){
     statusEl.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> دوس "بدء/Start" بالبوت، وبانتظر التحقق...</span>`;
     lucide.createIcons();
 
-    let attempts = 0;
+    activePollSessionId = sessionId;
+    pollAttempts = 0;
     clearInterval(pollTimer);
-    pollTimer = setInterval(async ()=>{
-      attempts++;
-      if(attempts > 60){ // ~2 minutes
-        clearInterval(pollTimer);
-        statusEl.innerHTML = `<span class="text-amber-400">ما وصلنا رد بعد. تأكد ضغطت "Start" بالبوت، وجرب الزر من جديد.</span>`;
-        btn.disabled = false;
-        return;
-      }
-      try{
-        const sres = await fetch(`${API_BASE}/api/session-status?sid=${sessionId}`);
-        if(!sres.ok) return;
-        const sdata = await sres.json();
-        if(sdata.status === 'subscribed'){
-          clearInterval(pollTimer);
-          statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
-          setTimeout(()=>{
-            document.getElementById('lockModal').classList.add('hidden');
-            btn.disabled = false;
-            if(pendingReveal){ pendingReveal(); pendingReveal = null; }
-          }, 600);
-        } else if(sdata.status === 'missing'){
-          clearInterval(pollTimer);
-          const namesMap = {'@wezaryataa':'قناة وزاري التعليمية'};
-          const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
-          statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'القناة'}. اشترك وبعدين دوس الزر من جديد.</span>`;
-          btn.disabled = false;
-        }
-        // status 'pending' -> keep polling silently
-      } catch(e){ /* keep polling */ }
-    }, 2000);
+    pollTimer = setInterval(()=> pollSessionOnce(sessionId), 2000);
   } catch(e){
     statusEl.innerHTML = `<span class="text-red-400">ما قدرنا نوصل للسيرفر. تأكد إن السيرفر شغال.</span>`;
     btn.disabled = false;
   }
 }
+
+async function pollSessionOnce(sessionId){
+  const statusEl = document.getElementById('tgStatus');
+  const btn = document.getElementById('verifyViaBotBtn');
+  pollAttempts++;
+  if(pollAttempts > 90){ // ~3 minutes of active polling
+    clearInterval(pollTimer);
+    activePollSessionId = null;
+    statusEl.innerHTML = `<span class="text-amber-400">ما وصلنا رد بعد. تأكد ضغطت "Start" بالبوت، وجرب الزر من جديد.</span>`;
+    btn.disabled = false;
+    return;
+  }
+  try{
+    const sres = await fetch(`${API_BASE}/api/session-status?sid=${sessionId}`);
+    if(!sres.ok) return;
+    const sdata = await sres.json();
+    if(sdata.status === 'subscribed'){
+      clearInterval(pollTimer);
+      activePollSessionId = null;
+      statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
+      setTimeout(()=>{
+        document.getElementById('lockModal').classList.add('hidden');
+        btn.disabled = false;
+        if(pendingReveal){ pendingReveal(); pendingReveal = null; }
+      }, 600);
+    } else if(sdata.status === 'missing'){
+      clearInterval(pollTimer);
+      activePollSessionId = null;
+      const namesMap = {'@wezaryataa':'قناة وزاري التعليمية'};
+      const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
+      statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'القناة'}. اشترك وبعدين دوس الزر من جديد.</span>`;
+      btn.disabled = false;
+    }
+    // status 'pending' -> keep polling silently
+  } catch(e){ /* keep polling */ }
+}
+
+// Mobile browsers throttle setInterval while the tab is hidden (e.g. while the
+// person is over in the Telegram app). The moment they switch back to this tab,
+// check right away instead of waiting for the throttled interval to catch up.
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && activePollSessionId){
+    pollSessionOnce(activePollSessionId);
+  }
+});
 
 document.getElementById('verifyViaBotBtn').addEventListener('click', startBotVerification);
 document.getElementById('openTgFromStrip').addEventListener('click', ()=> requestUnlock(()=>{}));
