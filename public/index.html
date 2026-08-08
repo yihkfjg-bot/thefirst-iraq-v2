@@ -118,7 +118,7 @@
     <nav class="hidden md:flex items-center gap-7 text-sm text-slate-600">
       <a href="#subjects" class="hover:text-purple2 transition">المواد</a>
       <a href="#topics" class="hover:text-cyan2 transition">أقسام عامة</a>
-      <a href="#tg" class="hover:text-purple2 transition">قنواتنا</a>
+      <a href="#tg" class="hover:text-purple2 transition">قناتنا</a>
     </nav>
     <div class="flex items-center gap-3">
       <a href="#subjects" class="bg-gradient-to-l from-purple2 to-cyan2 text-white text-sm font-medium px-5 py-2 rounded-lg">ابدأ</a>
@@ -166,7 +166,7 @@
         <span class="border border-purple2/40 rounded px-2 py-0.5 font-display font-bold">٠١</span> المواد الدراسية
       </div>
       <h2 class="font-display font-bold text-2xl md:text-3xl text-slate-800">٨ مواد، كل وحدة بأسئلتها الخاصة</h2>
-      <p class="text-slate-500 text-sm mt-2">افتح مادتك وشوف الأسئلة، والجواب الكامل يفتح بعد الاشتراك بقنواتنا.</p>
+      <p class="text-slate-500 text-sm mt-2">افتح مادتك وشوف الأسئلة، والجواب الكامل يفتح بعد الاشتراك بقناتنا.</p>
     </div>
     <div id="subjectGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
   </div>
@@ -191,9 +191,9 @@
   <div class="max-w-4xl mx-auto px-6">
     <div class="glass-strong rounded-2xl p-8 text-center">
       <i data-lucide="send" class="w-8 h-8 text-cyan2 mx-auto mb-4"></i>
-      <h3 class="font-display font-bold text-xl text-slate-800 mb-2">قنواتنا على تليجرام</h3>
-      <p class="text-slate-500 text-sm mb-6">تفاصيل كل الأجوبة، المخططات، والوزاريات تنزل أول بأول بقنواتنا الثلاث.</p>
-      <button id="openTgFromStrip" class="bg-gradient-to-l from-purple2 to-cyan2 text-white text-sm font-medium px-6 py-3 rounded-lg">اشترك الحين</button>
+      <h3 class="font-display font-bold text-xl text-slate-800 mb-2">قناتنا على التليجرام</h3>
+      <p class="text-slate-500 text-sm mb-6">كل موضوع يشغل بال طالب السادس.</p>
+      <button id="openTgFromStrip" class="bg-gradient-to-l from-purple2 to-cyan2 text-white text-sm font-medium px-6 py-3 rounded-lg">اشترك الان</button>
     </div>
   </div>
 </section>
@@ -251,19 +251,9 @@
       <i data-lucide="lock" class="w-6 h-6 text-white"></i>
     </div>
     <h3 class="font-display font-bold text-lg text-slate-800 mb-2">جواب مقفول</h3>
-    <p class="text-sm text-slate-500 mb-6">للوصول إلى الإجابة الكاملة، اشترك بالقنوات الثلاث، بعدها سجّل دخولك بتليجرام للتحقق.</p>
+    <p class="text-sm text-slate-500 mb-6">للوصول إلى الإجابة الكاملة، اشترك بقناتنا، بعدها تحقق عبر البوت.</p>
 
     <div class="space-y-2.5 mb-6">
-      <a href="https://t.me/islamicwezary" target="_blank" rel="noopener" class="flex items-center gap-3 glass rounded-xl px-4 py-3 hover:border-purple2/50 transition text-right">
-        <i data-lucide="send" class="w-4 h-4 text-purple2 flex-shrink-0"></i>
-        <div class="flex-1"><div class="text-sm text-slate-800">قناة الأستاذ علي فليح داود</div><div class="text-[11px] text-slate-500">القناة الرئيسية</div></div>
-        <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-400"></i>
-      </a>
-      <a href="https://t.me/FrancaisAA" target="_blank" rel="noopener" class="flex items-center gap-3 glass rounded-xl px-4 py-3 hover:border-cyan2/50 transition text-right">
-        <i data-lucide="send" class="w-4 h-4 text-cyan2 flex-shrink-0"></i>
-        <div class="flex-1"><div class="text-sm text-slate-800">قناة الأستاذ علي أحمد</div><div class="text-[11px] text-slate-500">ملفات ومخططات جاهزة</div></div>
-        <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-400"></i>
-      </a>
       <a href="https://t.me/wezaryataa" target="_blank" rel="noopener" class="flex items-center gap-3 glass rounded-xl px-4 py-3 hover:border-purple2/50 transition text-right">
         <i data-lucide="send" class="w-4 h-4 text-purple2 flex-shrink-0"></i>
         <div class="flex-1"><div class="text-sm text-slate-800">قناة وزاري التعليمية</div><div class="text-[11px] text-slate-500">وزاريات وأسئلة سنوات سابقة</div></div>
@@ -362,7 +352,7 @@ async function startBotVerification(){
           clearInterval(pollTimer);
           verifiedUserId = sdata.userId;
           localStorage.setItem(USER_KEY, String(sdata.userId));
-          statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بكل القنوات!</span>`;
+          statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
           setTimeout(()=>{
             document.getElementById('lockModal').classList.add('hidden');
             btn.disabled = false;
@@ -370,9 +360,9 @@ async function startBotVerification(){
           }, 600);
         } else if(sdata.status === 'missing'){
           clearInterval(pollTimer);
-          const namesMap = {'@islamicwezary':'قناة الأستاذ علي فليح داود','@FrancaisAA':'قناة الأستاذ علي أحمد','@wezaryataa':'قناة وزاري التعليمية'};
+          const namesMap = {'@wezaryataa':'قناة وزاري التعليمية'};
           const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
-          statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'بعض القنوات'}. اشترك وبعدين دوس الزر من جديد.</span>`;
+          statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'القناة'}. اشترك وبعدين دوس الزر من جديد.</span>`;
           btn.disabled = false;
         }
         // status 'pending' -> keep polling silently
