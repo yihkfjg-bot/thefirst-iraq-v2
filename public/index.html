@@ -276,22 +276,48 @@
 <script>
 lucide.createIcons();
 
-/* =================== GATE (bot deep-link verification — always fresh, no remembering) =================== */
-// Every locked click always goes through the bot. Nothing is ever cached
-// (no localStorage, no sessionStorage) — every single unlock requires a fresh check.
+/* =================== GATE (bot deep-link verification, verify-once-per-session) =================== */
+// Verifying once is remembered only for this open browser tab (sessionStorage) —
+// not localStorage. Close the tab / open a new one / switch device and it resets.
+const SESSION_USER_KEY = 'awael_tg_userid_session_v1';
 const API_BASE = ''; // same-origin
 const BOT_USERNAME = 'thefirstiraqbot';
 let pendingReveal = null;
 let pollTimer = null;
+let verifiedUserId = sessionStorage.getItem(SESSION_USER_KEY) || null;
 
 function requestUnlock(revealFn){
   pendingReveal = revealFn;
-  openLockModal();
+  if(verifiedUserId){
+    silentReverify();
+  } else {
+    openLockModal();
+  }
 }
 
 function openLockModal(){
   document.getElementById('tgStatus').textContent = '';
   document.getElementById('lockModal').classList.remove('hidden');
+}
+
+async function silentReverify(){
+  try{
+    const res = await fetch(`${API_BASE}/api/check-by-id`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ userId: verifiedUserId })
+    });
+    const data = await res.json();
+    if(res.ok && data.subscribed){
+      if(pendingReveal){ pendingReveal(); pendingReveal = null; }
+    } else {
+      verifiedUserId = null;
+      sessionStorage.removeItem(SESSION_USER_KEY);
+      openLockModal();
+    }
+  } catch(e){
+    openLockModal();
+  }
 }
 
 
@@ -348,6 +374,8 @@ async function pollSessionOnce(sessionId){
     if(sdata.status === 'subscribed'){
       clearInterval(pollTimer);
       activePollSessionId = null;
+      verifiedUserId = sdata.userId;
+      sessionStorage.setItem(SESSION_USER_KEY, String(sdata.userId));
       statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
       setTimeout(()=>{
         document.getElementById('lockModal').classList.add('hidden');
