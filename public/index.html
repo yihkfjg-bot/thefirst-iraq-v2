@@ -325,11 +325,17 @@ async function startBotVerification(){
   statusEl.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> جاري فتح البوت...</span>`;
   lucide.createIcons();
 
+  // Open the tab synchronously, still inside the click handler, before any
+  // await — otherwise Safari/iOS blocks it as a popup once we've gone async.
+  const botWindow = window.open('', '_blank');
+
   try{
     const res = await fetch(`${API_BASE}/api/create-session`, { method:'POST' });
     const { sessionId } = await res.json();
 
-    window.open(`https://t.me/${BOT_USERNAME}?start=${sessionId}`, '_blank');
+    const deepLink = `https://t.me/${BOT_USERNAME}?start=${sessionId}`;
+    if(botWindow){ botWindow.location.href = deepLink; }
+    else { window.location.href = deepLink; } // popup blocked anyway — fall back to same-tab navigation
 
     statusEl.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> دوس "بدء/Start" بالبوت، وبانتظر التحقق...</span>`;
     lucide.createIcons();
