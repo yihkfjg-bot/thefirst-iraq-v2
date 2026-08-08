@@ -204,23 +204,56 @@ app.post('/api/check-subscription', async (req, res) => {
 
 /* =================== BOT DEEP-LINK VERIFICATION (no login widget needed) =================== */
 // Flow: site creates a short-lived session -> opens t.me/<bot>?start=<sessionId> in Telegram ->
-// bot receives /start via webhook, checks real channel membership, stores the result on the
-// session -> site polls the session until it flips to "subscribed".
+// bot sends an interactive message (channel buttons + a "تحقق من الاشتراك" button) ->
+// person joins the channel(s) then taps the check button -> bot verifies via getChatMember ->
+// site (which is polling the session) picks up the result and unlocks the answer.
 
 const sessions = new Map(); // sessionId -> { status, missing, userId, createdAt }
 const WEBHOOK_PATH = '/api/telegram-webhook/' + crypto.createHash('sha256').update(BOT_TOKEN || 'no-token').digest('hex').slice(0, 24);
 
-async function sendTelegramMessage(chatId, text) {
-  if (!BOT_TOKEN) return;
+// Friendly display names for each channel, shown to the student inside Telegram.
+const CHANNEL_LABELS = {
+  '@wezaryataa': 'قناة وزاري التعليمية',
+};
+
+async function telegramApi(method, payload) {
+  if (!BOT_TOKEN) return null;
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify(payload),
     });
+    return await res.json();
   } catch (e) {
-    console.error('sendTelegramMessage failed', e);
+    console.error(`${method} failed`, e);
+    return null;
   }
+}
+
+function buildSubscribeKeyboard(sessionId, missing) {
+  const channelButtons = (missing.length ? missing : CHANNELS).map((ch) => ([{
+    text: `الاشتراك في ${CHANNEL_LABELS[ch] || ch} 📢`,
+    url: `https://t.me/${ch.replace('@', '')}`,
+  }]));
+  return {
+    inline_keyboard: [
+      ...channelButtons,
+      [{ text: 'تحقق من الاشتراك ✅', callback_data: `check:${sessionId}` }],
+    ],
+  };
+}
+
+function buildStatusText(missing) {
+  const lines = CHANNELS.map((ch) => {
+    const isMissing = missing.includes(ch);
+    return `${CHANNEL_LABELS[ch] || ch} — ${isMissing ? 'غير مشترك ❌' : 'مشترك ✅'}`;
+  });
+  return `🔔 اشترك في القنوات التالية أولاً\n\n${lines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\nبعد ما تشترك، دوس زر "تحقق من الاشتراك" تحت.`;
+}
+
+async function sendTelegramMessage(chatId, text) {
+  await telegramApi('sendMessage', { chat_id: chatId, text });
 }
 
 // The site calls this first to get a session id before opening the bot deep link.
@@ -255,27 +288,66 @@ app.post('/api/check-by-id', async (req, res) => {
   }
 });
 
-// Telegram calls this endpoint directly whenever someone messages the bot.
+// Telegram calls this endpoint directly whenever someone messages the bot or taps a button.
 app.post(WEBHOOK_PATH, async (req, res) => {
   try {
     const msg = req.body && req.body.message;
+    const callback = req.body && req.body.callback_query;
+
     if (msg && msg.text && msg.text.startsWith('/start')) {
       const parts = msg.text.trim().split(' ');
       const sessionId = parts[1];
-      const userId = msg.from.id;
 
       if (sessionId && sessions.has(sessionId)) {
+        const userId = msg.from.id;
         const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
         const missing = CHANNELS.filter((_, i) => !results[i]);
-        const subscribed = missing.length === 0;
-        sessions.set(sessionId, { status: subscribed ? 'subscribed' : 'missing', missing, userId, createdAt: Date.now() });
+        sessions.set(sessionId, { status: missing.length === 0 ? 'subscribed' : 'missing', missing, userId, createdAt: Date.now() });
 
-        const reply = subscribed
-          ? '✅ تم التحقق! ارجع لموقع أوائل العراق، الجواب راح يفتح تلقائيًا خلال ثوانٍ.'
-          : '⚠️ لسا ناقصك الاشتراك ببعض القنوات. اشترك بيها وبعدها دوس مرة ثانية على نفس زر "تحقق عبر البوت" بالموقع.';
-        await sendTelegramMessage(msg.chat.id, reply);
+        if (missing.length === 0) {
+          await sendTelegramMessage(msg.chat.id, '✅ تم التحقق! ارجع لموقع أوائل العراق، الجواب راح يفتح تلقائيًا خلال ثوانٍ.');
+        } else {
+          await telegramApi('sendMessage', {
+            chat_id: msg.chat.id,
+            text: buildStatusText(missing),
+            reply_markup: buildSubscribeKeyboard(sessionId, missing),
+          });
+        }
       } else {
         await sendTelegramMessage(msg.chat.id, 'أهلاً بيك 👋 لازم تفتح هذا الرابط من داخل موقع أوائل العراق (زر "تحقق عبر البوت") حتى يشتغل التحقق صح.');
+      }
+    }
+
+    if (callback && callback.data && callback.data.startsWith('check:')) {
+      const sessionId = callback.data.split(':')[1];
+      const userId = callback.from.id;
+      const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
+      const missing = CHANNELS.filter((_, i) => !results[i]);
+      const subscribed = missing.length === 0;
+
+      if (sessionId && sessions.has(sessionId)) {
+        sessions.set(sessionId, { status: subscribed ? 'subscribed' : 'missing', missing, userId, createdAt: Date.now() });
+      }
+
+      await telegramApi('answerCallbackQuery', {
+        callback_query_id: callback.id,
+        text: subscribed ? '✅ تم التحقق، أنت مشترك!' : '⚠️ لسا ناقصك تشترك ببعض القنوات.',
+        show_alert: false,
+      });
+
+      if (subscribed) {
+        await telegramApi('editMessageText', {
+          chat_id: callback.message.chat.id,
+          message_id: callback.message.message_id,
+          text: '✅ تم التحقق! ارجع لموقع أوائل العراق، الجواب راح يفتح تلقائيًا خلال ثوانٍ.',
+        });
+      } else {
+        await telegramApi('editMessageText', {
+          chat_id: callback.message.chat.id,
+          message_id: callback.message.message_id,
+          text: buildStatusText(missing),
+          reply_markup: buildSubscribeKeyboard(sessionId, missing),
+        });
       }
     }
   } catch (e) {
