@@ -272,10 +272,11 @@
     </div>
 
     <div class="border-t border-slate-100 pt-5">
-      <p class="text-[11px] text-slate-500 mb-4">بعد ما تشترك، سجّل دخولك بتليجرام هنا للتحقق الفعلي:</p>
-      <div id="tgLoginBtn" class="flex justify-center mb-3"></div>
-      <div id="tgStatus" class="text-xs text-slate-500 min-h-[20px]"></div>
-      <button id="recheckBtn" class="hidden w-full mt-3 glass text-slate-700 text-xs py-2.5 rounded-xl">تحقق مرة ثانية</button>
+      <p class="text-[11px] text-slate-500 mb-4">بعد ما تشترك، دوس هذا الزر — يفتح بوت التليجرام ويتحقق منك تلقائيًا:</p>
+      <button id="verifyViaBotBtn" class="w-full bg-gradient-to-l from-purple2 to-cyan2 text-white text-sm font-semibold py-3 rounded-xl flex items-center justify-center gap-2">
+        <i data-lucide="send" class="w-4 h-4"></i> تحقق عبر البوت
+      </button>
+      <div id="tgStatus" class="text-xs text-slate-500 min-h-[20px] mt-3"></div>
     </div>
 
     <button onclick="document.getElementById('lockModal').classList.add('hidden')" class="w-full text-slate-400 text-xs mt-5">إلغاء</button>
@@ -285,16 +286,17 @@
 <script>
 lucide.createIcons();
 
-/* =================== GATE (real Telegram subscription check via backend) =================== */
-const AUTH_KEY = 'awael_tg_auth_v1'; // stores the verified Telegram login payload
+/* =================== GATE (bot deep-link verification, no login widget) =================== */
+const USER_KEY = 'awael_tg_userid_v1'; // stores the verified Telegram user id once known
 const API_BASE = ''; // same-origin
+const BOT_USERNAME = 'thefirstiraqbot';
 let pendingReveal = null;
-let lastAuthUser = null;
-try{ const saved = localStorage.getItem(AUTH_KEY); if(saved) lastAuthUser = JSON.parse(saved); }catch(e){}
+let verifiedUserId = localStorage.getItem(USER_KEY) || null;
+let pollTimer = null;
 
 function requestUnlock(revealFn){
   pendingReveal = revealFn;
-  if(lastAuthUser){
+  if(verifiedUserId){
     silentReverify();
   } else {
     openLockModal();
@@ -303,23 +305,22 @@ function requestUnlock(revealFn){
 
 function openLockModal(){
   document.getElementById('tgStatus').textContent = '';
-  document.getElementById('recheckBtn').classList.add('hidden');
   document.getElementById('lockModal').classList.remove('hidden');
 }
 
 async function silentReverify(){
   try{
-    const res = await fetch(`${API_BASE}/api/check-subscription`, {
+    const res = await fetch(`${API_BASE}/api/check-by-id`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(lastAuthUser)
+      body: JSON.stringify({ userId: verifiedUserId })
     });
     const data = await res.json();
     if(res.ok && data.subscribed){
       if(pendingReveal){ pendingReveal(); pendingReveal = null; }
     } else {
-      lastAuthUser = null;
-      localStorage.removeItem(AUTH_KEY);
+      verifiedUserId = null;
+      localStorage.removeItem(USER_KEY);
       openLockModal();
     }
   } catch(e){
@@ -327,63 +328,65 @@ async function silentReverify(){
   }
 }
 
-async function sendAuthToServer(user){
+async function startBotVerification(){
   const statusEl = document.getElementById('tgStatus');
-  statusEl.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> جاري التحقق من اشتراكك...</span>`;
+  const btn = document.getElementById('verifyViaBotBtn');
+  btn.disabled = true;
+  statusEl.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> جاري فتح البوت...</span>`;
   lucide.createIcons();
+
   try{
-    const res = await fetch(`${API_BASE}/api/check-subscription`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(user)
-    });
-    const data = await res.json();
-    if(!res.ok){
-      statusEl.innerHTML = `<span class="text-red-400">صار خطأ بالتحقق (${data.error || res.status}). حاول مرة ثانية.</span>`;
-      document.getElementById('recheckBtn').classList.remove('hidden');
-      return;
-    }
-    if(data.subscribed){
-      statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بكل القنوات!</span>`;
-      lastAuthUser = user;
-      localStorage.setItem(AUTH_KEY, JSON.stringify(user));
-      setTimeout(()=>{
-        document.getElementById('lockModal').classList.add('hidden');
-        if(pendingReveal){ pendingReveal(); pendingReveal = null; }
-      }, 600);
-    } else {
-      const namesMap = {'@islamicwezary':'قناة الأستاذ علي فليح داود','@FrancaisAA':'قناة الأستاذ علي أحمد','@wezaryataa':'قناة وزاري التعليمية'};
-      const missingNames = (data.missing || []).map(m => namesMap[m] || m).join('، ');
-      statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'بعض القنوات'}. اشترك وبعدين دوس تحقق مرة ثانية.</span>`;
-      document.getElementById('recheckBtn').classList.remove('hidden');
-      lastAuthUser = user;
-    }
+    const res = await fetch(`${API_BASE}/api/create-session`, { method:'POST' });
+    const { sessionId } = await res.json();
+
+    window.open(`https://t.me/${BOT_USERNAME}?start=${sessionId}`, '_blank');
+
+    statusEl.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> دوس "بدء/Start" بالبوت، وبانتظر التحقق...</span>`;
+    lucide.createIcons();
+
+    let attempts = 0;
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async ()=>{
+      attempts++;
+      if(attempts > 60){ // ~2 minutes
+        clearInterval(pollTimer);
+        statusEl.innerHTML = `<span class="text-amber-400">ما وصلنا رد بعد. تأكد ضغطت "Start" بالبوت، وجرب الزر من جديد.</span>`;
+        btn.disabled = false;
+        return;
+      }
+      try{
+        const sres = await fetch(`${API_BASE}/api/session-status?sid=${sessionId}`);
+        if(!sres.ok) return;
+        const sdata = await sres.json();
+        if(sdata.status === 'subscribed'){
+          clearInterval(pollTimer);
+          verifiedUserId = sdata.userId;
+          localStorage.setItem(USER_KEY, String(sdata.userId));
+          statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بكل القنوات!</span>`;
+          setTimeout(()=>{
+            document.getElementById('lockModal').classList.add('hidden');
+            btn.disabled = false;
+            if(pendingReveal){ pendingReveal(); pendingReveal = null; }
+          }, 600);
+        } else if(sdata.status === 'missing'){
+          clearInterval(pollTimer);
+          const namesMap = {'@islamicwezary':'قناة الأستاذ علي فليح داود','@FrancaisAA':'قناة الأستاذ علي أحمد','@wezaryataa':'قناة وزاري التعليمية'};
+          const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
+          statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'بعض القنوات'}. اشترك وبعدين دوس الزر من جديد.</span>`;
+          btn.disabled = false;
+        }
+        // status 'pending' -> keep polling silently
+      } catch(e){ /* keep polling */ }
+    }, 2000);
   } catch(e){
     statusEl.innerHTML = `<span class="text-red-400">ما قدرنا نوصل للسيرفر. تأكد إن السيرفر شغال.</span>`;
-    document.getElementById('recheckBtn').classList.remove('hidden');
+    btn.disabled = false;
   }
 }
 
-function onTelegramAuth(user){ sendAuthToServer(user); }
-
-document.getElementById('recheckBtn').addEventListener('click', ()=>{
-  if(lastAuthUser) sendAuthToServer(lastAuthUser);
-});
-
+document.getElementById('verifyViaBotBtn').addEventListener('click', startBotVerification);
 document.getElementById('openTgFromStrip').addEventListener('click', ()=> requestUnlock(()=>{}));
 
-// Renders the official Telegram Login Widget, pointed at your bot.
-(function renderTelegramWidget(){
-  const s = document.createElement('script');
-  s.async = true;
-  s.src = 'https://telegram.org/js/telegram-widget.js?22';
-  s.setAttribute('data-telegram-login', 'thefirstiraqbot');
-  s.setAttribute('data-size', 'large');
-  s.setAttribute('data-radius', '10');
-  s.setAttribute('data-onauth', 'onTelegramAuth(user)');
-  s.setAttribute('data-request-access', 'write');
-  document.getElementById('tgLoginBtn').appendChild(s);
-})();
 /* =================== THEME (dark mode) =================== */
 const THEME_KEY = 'awael_theme_v1';
 function applyTheme(theme){
