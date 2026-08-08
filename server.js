@@ -204,6 +204,113 @@ app.post('/api/check-subscription', async (req, res) => {
   }
 });
 
+/* =================== BOT DEEP-LINK VERIFICATION (no login widget needed) =================== */
+// Flow: site creates a short-lived session -> opens t.me/<bot>?start=<sessionId> in Telegram ->
+// bot receives /start via webhook, checks real channel membership, stores the result on the
+// session -> site polls the session until it flips to "subscribed".
+
+const sessions = new Map(); // sessionId -> { status, missing, userId, createdAt }
+const WEBHOOK_PATH = '/api/telegram-webhook/' + crypto.createHash('sha256').update(BOT_TOKEN || 'no-token').digest('hex').slice(0, 24);
+
+async function sendTelegramMessage(chatId, text) {
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text }),
+    });
+  } catch (e) {
+    console.error('sendTelegramMessage failed', e);
+  }
+}
+
+// The site calls this first to get a session id before opening the bot deep link.
+app.post('/api/create-session', (req, res) => {
+  const sessionId = crypto.randomBytes(12).toString('hex');
+  sessions.set(sessionId, { status: 'pending', createdAt: Date.now() });
+  res.json({ sessionId });
+});
+
+// The site polls this while the person is over in Telegram talking to the bot.
+app.get('/api/session-status', (req, res) => {
+  const { sid } = req.query;
+  const s = sessions.get(sid);
+  if (!s) return res.status(404).json({ error: 'not_found' });
+  res.json(s);
+});
+
+// Once a session has been verified once, the site can silently re-check the same
+// Telegram user id later (e.g. next visit) without going through the bot again —
+// unless they've left a channel, in which case this correctly reports missing:[...].
+app.post('/api/check-by-id', async (req, res) => {
+  if (!BOT_TOKEN) return res.status(500).json({ error: 'bot_token_not_configured' });
+  const userId = req.body && req.body.userId;
+  if (!userId) return res.status(400).json({ error: 'missing_user_id' });
+  try {
+    const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
+    const missing = CHANNELS.filter((_, i) => !results[i]);
+    res.json({ subscribed: missing.length === 0, missing });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// Telegram calls this endpoint directly whenever someone messages the bot.
+app.post(WEBHOOK_PATH, async (req, res) => {
+  try {
+    const msg = req.body && req.body.message;
+    if (msg && msg.text && msg.text.startsWith('/start')) {
+      const parts = msg.text.trim().split(' ');
+      const sessionId = parts[1];
+      const userId = msg.from.id;
+
+      if (sessionId && sessions.has(sessionId)) {
+        const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
+        const missing = CHANNELS.filter((_, i) => !results[i]);
+        const subscribed = missing.length === 0;
+        sessions.set(sessionId, { status: subscribed ? 'subscribed' : 'missing', missing, userId, createdAt: Date.now() });
+
+        const reply = subscribed
+          ? '✅ تم التحقق! ارجع لموقع أوائل العراق، الجواب راح يفتح تلقائيًا خلال ثوانٍ.'
+          : '⚠️ لسا ناقصك الاشتراك ببعض القنوات. اشترك بيها وبعدها دوس مرة ثانية على نفس زر "تحقق عبر البوت" بالموقع.';
+        await sendTelegramMessage(msg.chat.id, reply);
+      } else {
+        await sendTelegramMessage(msg.chat.id, 'أهلاً بيك 👋 لازم تفتح هذا الرابط من داخل موقع أوائل العراق (زر "تحقق عبر البوت") حتى يشتغل التحقق صح.');
+      }
+    }
+  } catch (e) {
+    console.error('Webhook handler error:', e);
+  }
+  res.sendStatus(200); // always 200 so Telegram doesn't keep retrying
+});
+
+// Clean up old sessions so this Map doesn't grow forever.
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.createdAt > 30 * 60 * 1000) sessions.delete(id);
+  }
+}, 5 * 60 * 1000);
+
+async function registerWebhook() {
+  const externalUrl = process.env.RENDER_EXTERNAL_URL;
+  if (!externalUrl || !BOT_TOKEN) {
+    console.warn('⚠️  Skipping Telegram webhook registration — RENDER_EXTERNAL_URL or BOT_TOKEN missing.');
+    return;
+  }
+  const webhookUrl = externalUrl + WEBHOOK_PATH;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+    const data = await res.json();
+    console.log(data.ok ? `✅ Telegram webhook registered: ${webhookUrl}` : `❌ Webhook registration failed: ${data.description}`);
+  } catch (e) {
+    console.error('Failed to register Telegram webhook:', e);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
+  registerWebhook();
 });
