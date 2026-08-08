@@ -280,6 +280,7 @@ lucide.createIcons();
 // Verifying once is remembered only for this open browser tab (sessionStorage) —
 // not localStorage. Close the tab / open a new one / switch device and it resets.
 const SESSION_USER_KEY = 'awael_tg_userid_session_v1';
+const PENDING_SESSION_KEY = 'awael_pending_session_v1'; // survives a full page reload while away in Telegram
 const API_BASE = ''; // same-origin
 const BOT_USERNAME = 'thefirstiraqbot';
 let pendingReveal = null;
@@ -320,6 +321,37 @@ async function silentReverify(){
   }
 }
 
+// Mobile browsers often fully discard/reload the tab while the person is away
+// in the Telegram app, wiping the JS state that was polling for the result.
+// So on every page load, check whether a verification was left in-flight and
+// ask the SERVER directly (the webhook already recorded the outcome there
+// independent of this tab) instead of relying on the old poll timer.
+async function resumePendingSessionIfAny(){
+  const sid = sessionStorage.getItem(PENDING_SESSION_KEY);
+  if(!sid) return;
+  try{
+    const res = await fetch(`${API_BASE}/api/session-status?sid=${sid}`);
+    if(res.ok){
+      const data = await res.json();
+      if(data.status === 'subscribed'){
+        verifiedUserId = data.userId;
+        sessionStorage.setItem(SESSION_USER_KEY, String(data.userId));
+        sessionStorage.removeItem(PENDING_SESSION_KEY);
+        showVerifiedBanner();
+        return;
+      }
+    }
+  } catch(e){ /* ignore, just leave the pending marker for next check */ }
+}
+resumePendingSessionIfAny();
+
+function showVerifiedBanner(){
+  const banner = document.createElement('div');
+  banner.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[200] bg-emerald-500 text-white text-sm font-medium px-5 py-3 rounded-xl shadow-lg';
+  banner.textContent = '✓ تم التحقق! دوس على أي قسم تريده، راح يفتح مباشرة.';
+  document.body.appendChild(banner);
+  setTimeout(()=> banner.remove(), 5000);
+}
 
 let activePollSessionId = null;
 let pollAttempts = 0;
@@ -338,6 +370,7 @@ async function startBotVerification(){
   try{
     const res = await fetch(`${API_BASE}/api/create-session`, { method:'POST' });
     const { sessionId } = await res.json();
+    sessionStorage.setItem(PENDING_SESSION_KEY, sessionId); // survives a reload while we're away in Telegram
 
     const deepLink = `https://t.me/${BOT_USERNAME}?start=${sessionId}`;
     if(botWindow){ botWindow.location.href = deepLink; }
@@ -376,6 +409,7 @@ async function pollSessionOnce(sessionId){
       activePollSessionId = null;
       verifiedUserId = sdata.userId;
       sessionStorage.setItem(SESSION_USER_KEY, String(sdata.userId));
+      sessionStorage.removeItem(PENDING_SESSION_KEY);
       statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
       setTimeout(()=>{
         document.getElementById('lockModal').classList.add('hidden');
@@ -385,6 +419,7 @@ async function pollSessionOnce(sessionId){
     } else if(sdata.status === 'missing'){
       clearInterval(pollTimer);
       activePollSessionId = null;
+      sessionStorage.removeItem(PENDING_SESSION_KEY);
       const namesMap = {'@wezaryataa':'قناة وزاري التعليمية'};
       const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
       statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'القناة'}. اشترك وبعدين دوس الزر من جديد.</span>`;
