@@ -31,8 +31,6 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 // The 3 channels students must be subscribed to.
 // Use @username for public channels. For private channels use the numeric chat id (e.g. -1001234567890).
 const CHANNELS = [
-  '@islamicwezary',
-  '@FrancaisAA',
   '@wezaryataa',
 ];
 
