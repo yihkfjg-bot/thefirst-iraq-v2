@@ -160,6 +160,12 @@ function verifyTelegramAuth(data) {
 /**
  * Asks Telegram directly whether userId is a member/admin/creator of the given channel.
  * The bot MUST be added to the channel (as admin is safest) for this to work reliably.
+ *
+ * IMPORTANT: a failed/errored API call (network hiccup, rate limit, transient Telegram
+ * error) is NOT the same thing as "not a member" — so this throws on !data.ok instead
+ * of quietly returning false. Silently returning false here used to cause false
+ * "❌ غير مشترك" results for people who really were subscribed, whenever Telegram's
+ * API had a momentary blip. Callers decide how to handle the thrown error.
  */
 async function isChannelMember(userId, channel) {
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${encodeURIComponent(
@@ -170,12 +176,45 @@ async function isChannelMember(userId, channel) {
   const data = await res.json();
 
   if (!data.ok) {
-    console.warn(`⚠️ getChatMember failed for ${channel}:`, data.description);
-    return false;
+    throw new Error(`getChatMember failed for ${channel}: ${data.description || 'unknown error'}`);
   }
 
   const status = data.result.status;
   return ['member', 'administrator', 'creator'].includes(status);
+}
+
+// Retries a single channel check a couple of times before giving up — smooths over
+// the occasional transient Telegram API error instead of instantly reporting "missing".
+async function isChannelMemberWithRetry(userId, channel, attempts = 3) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await isChannelMember(userId, channel);
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 350 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Checks membership across all required channels for a user.
+ * Returns { ok: true, missing: [...] } on a clean result, or { ok: false } if Telegram's
+ * API kept failing after retries — callers must treat ok:false as "unknown / try again
+ * later", NEVER as "not subscribed", to avoid wrongly locking out real subscribers.
+ */
+async function checkAllChannels(userId) {
+  try {
+    const results = await Promise.all(
+      CHANNELS.map((ch) => isChannelMemberWithRetry(userId, ch))
+    );
+    const missing = CHANNELS.filter((_, i) => !results[i]);
+    return { ok: true, missing };
+  } catch (e) {
+    console.warn('⚠️ Subscription check failed after retries (treated as unknown, not "unsubscribed"):', e.message);
+    return { ok: false };
+  }
 }
 
 app.post('/api/check-subscription', async (req, res) => {
@@ -190,12 +229,12 @@ app.post('/api/check-subscription', async (req, res) => {
     }
 
     const userId = authData.id;
-    const results = await Promise.all(
-      CHANNELS.map((ch) => isChannelMember(userId, ch))
-    );
-    const missing = CHANNELS.filter((_, i) => !results[i]);
+    const check = await checkAllChannels(userId);
+    if (!check.ok) {
+      return res.status(503).json({ error: 'telegram_temporarily_unavailable' });
+    }
 
-    res.json({ subscribed: missing.length === 0, missing });
+    res.json({ subscribed: check.missing.length === 0, missing: check.missing });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
@@ -279,9 +318,11 @@ app.post('/api/check-by-id', async (req, res) => {
   const userId = req.body && req.body.userId;
   if (!userId) return res.status(400).json({ error: 'missing_user_id' });
   try {
-    const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
-    const missing = CHANNELS.filter((_, i) => !results[i]);
-    res.json({ subscribed: missing.length === 0, missing });
+    const check = await checkAllChannels(userId);
+    if (!check.ok) {
+      return res.status(503).json({ error: 'telegram_temporarily_unavailable' });
+    }
+    res.json({ subscribed: check.missing.length === 0, missing: check.missing });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
@@ -300,8 +341,18 @@ app.post(WEBHOOK_PATH, async (req, res) => {
 
       if (sessionId && sessions.has(sessionId)) {
         const userId = msg.from.id;
-        const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
-        const missing = CHANNELS.filter((_, i) => !results[i]);
+        const check = await checkAllChannels(userId);
+
+        if (!check.ok) {
+          // Transient Telegram API failure — do NOT mark the session as "missing"
+          // (that would falsely tell a real subscriber they're not subscribed).
+          // Leave the session as-is (still 'pending') so the site keeps waiting,
+          // and let the person know to just try again in a moment.
+          await sendTelegramMessage(msg.chat.id, '⚠️ صار خطأ مؤقت أثناء التحقق من تليجرام. جرب دوس "Start" أو أرسل /start مرة ثانية بعد شوي.');
+          return;
+        }
+
+        const missing = check.missing;
         sessions.set(sessionId, { status: missing.length === 0 ? 'subscribed' : 'missing', missing, userId, createdAt: Date.now() });
 
         if (missing.length === 0) {
@@ -328,8 +379,20 @@ app.post(WEBHOOK_PATH, async (req, res) => {
     try {
       const sessionId = callback.data.split(':')[1];
       const userId = callback.from.id;
-      const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
-      const missing = CHANNELS.filter((_, i) => !results[i]);
+      const check = await checkAllChannels(userId);
+
+      if (!check.ok) {
+        // Transient Telegram API failure — don't touch the session or tell the
+        // person they're unsubscribed; just ask them to tap the button again.
+        await telegramApi('answerCallbackQuery', {
+          callback_query_id: callback.id,
+          text: '⚠️ صار خطأ مؤقت بالتحقق من تليجرام. جرب دوس الزر مرة ثانية بعد شوي.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      const missing = check.missing;
       const subscribed = missing.length === 0;
 
       if (sessionId && sessions.has(sessionId)) {
