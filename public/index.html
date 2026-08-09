@@ -320,6 +320,41 @@ async function silentReverify(){
   }
 }
 
+// Mobile browsers often fully reload this tab while the person is away in the
+// Telegram app — wiping the poll timer and any in-memory variables. So we keep
+// a tiny marker (just the session id, nothing personal) that survives a reload,
+// and the moment the page loads again we ask the SERVER directly whether that
+// session was already verified (Telegram's webhook updates it independently of
+// this browser tab, so the server always has the real answer).
+const PENDING_SESSION_KEY = 'awael_pending_session_v1';
+
+async function checkPendingSessionOnLoad(){
+  const sid = sessionStorage.getItem(PENDING_SESSION_KEY);
+  if(!sid) return;
+  try{
+    const res = await fetch(`${API_BASE}/api/session-status?sid=${sid}`);
+    if(!res.ok) return; // session expired or not found — just drop it silently
+    const data = await res.json();
+    if(data.status === 'subscribed'){
+      verifiedUserId = data.userId;
+      sessionStorage.setItem(SESSION_USER_KEY, String(data.userId));
+      sessionStorage.removeItem(PENDING_SESSION_KEY);
+      if(pendingReveal){
+        // The lock modal is likely still open (or was reopened after reload) — unlock it directly.
+        document.getElementById('lockModal').classList.add('hidden');
+        pendingReveal(); pendingReveal = null;
+      }
+    } else if(data.status === 'missing'){
+      sessionStorage.removeItem(PENDING_SESSION_KEY);
+    }
+    // status 'pending' -> leave the marker, we'll check again next load/visibility change
+  } catch(e){ /* network hiccup — just try again next time */ }
+}
+checkPendingSessionOnLoad();
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) checkPendingSessionOnLoad();
+});
+
 let activePollSessionId = null;
 let pollAttempts = 0;
 
@@ -337,6 +372,7 @@ async function startBotVerification(){
   try{
     const res = await fetch(`${API_BASE}/api/create-session`, { method:'POST' });
     const { sessionId } = await res.json();
+    sessionStorage.setItem(PENDING_SESSION_KEY, sessionId); // survives a reload while we're away in Telegram
 
     const deepLink = `https://t.me/${BOT_USERNAME}?start=${sessionId}`;
     if(botWindow){ botWindow.location.href = deepLink; }
@@ -375,6 +411,7 @@ async function pollSessionOnce(sessionId){
       activePollSessionId = null;
       verifiedUserId = sdata.userId;
       sessionStorage.setItem(SESSION_USER_KEY, String(sdata.userId));
+      sessionStorage.removeItem(PENDING_SESSION_KEY);
       statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
       setTimeout(()=>{
         document.getElementById('lockModal').classList.add('hidden');
@@ -384,6 +421,7 @@ async function pollSessionOnce(sessionId){
     } else if(sdata.status === 'missing'){
       clearInterval(pollTimer);
       activePollSessionId = null;
+      sessionStorage.removeItem(PENDING_SESSION_KEY);
       const namesMap = {'@wezaryataa':'قناة وزاري التعليمية'};
       const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
       statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'القناة'}. اشترك وبعدين دوس الزر من جديد.</span>`;
