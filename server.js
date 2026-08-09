@@ -290,11 +290,11 @@ app.post('/api/check-by-id', async (req, res) => {
 
 // Telegram calls this endpoint directly whenever someone messages the bot or taps a button.
 app.post(WEBHOOK_PATH, async (req, res) => {
-  try {
-    const msg = req.body && req.body.message;
-    const callback = req.body && req.body.callback_query;
+  const msg = req.body && req.body.message;
+  const callback = req.body && req.body.callback_query;
 
-    if (msg && msg.text && msg.text.startsWith('/start')) {
+  if (msg && msg.text && msg.text.startsWith('/start')) {
+    try {
       const parts = msg.text.trim().split(' ');
       const sessionId = parts[1];
 
@@ -316,9 +316,16 @@ app.post(WEBHOOK_PATH, async (req, res) => {
       } else {
         await sendTelegramMessage(msg.chat.id, 'أهلاً بيك 👋 لازم تفتح هذا الرابط من داخل موقع أوائل العراق (زر "تحقق عبر البوت") حتى يشتغل التحقق صح.');
       }
+    } catch (e) {
+      console.error('Webhook /start error:', e);
+      await sendTelegramMessage(msg.chat.id, '⚠️ صار خطأ مؤقت. جرب ترسل /start مرة ثانية بعد شوي.');
     }
+  }
 
-    if (callback && callback.data && callback.data.startsWith('check:')) {
+  if (callback && callback.data && callback.data.startsWith('check:')) {
+    // Whatever happens below, ALWAYS answer the callback query — otherwise
+    // Telegram leaves the button showing a spinner forever on the person's screen.
+    try {
       const sessionId = callback.data.split(':')[1];
       const userId = callback.from.id;
       const results = await Promise.all(CHANNELS.map((ch) => isChannelMember(userId, ch)));
@@ -349,10 +356,18 @@ app.post(WEBHOOK_PATH, async (req, res) => {
           reply_markup: buildSubscribeKeyboard(sessionId, missing),
         });
       }
+    } catch (e) {
+      console.error('Webhook callback error:', e);
+      // Still answer the callback even though something failed, so the button
+      // stops spinning and the person gets some feedback instead of silence.
+      await telegramApi('answerCallbackQuery', {
+        callback_query_id: callback.id,
+        text: '⚠️ صار خطأ مؤقت بالتحقق. جرب دوس الزر مرة ثانية بعد شوي.',
+        show_alert: true,
+      });
     }
-  } catch (e) {
-    console.error('Webhook handler error:', e);
   }
+
   res.sendStatus(200); // always 200 so Telegram doesn't keep retrying
 });
 
