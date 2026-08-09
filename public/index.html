@@ -277,14 +277,17 @@
 lucide.createIcons();
 
 /* =================== GATE (bot deep-link verification, verify-once-per-session) =================== */
-// Verifying once is remembered only for this open browser tab (sessionStorage) —
-// not localStorage. Close the tab / open a new one / switch device and it resets.
+// Verifying once is remembered on this device/browser (localStorage) — closing
+// the tab or the whole browser and coming back later still counts as verified.
+// Only switching to a different browser/device (or clearing site data) resets it.
+// The server still re-checks real Telegram membership each time via /api/check-by-id,
+// so someone who unsubscribed from the channel gets locked out again automatically.
 const SESSION_USER_KEY = 'awael_tg_userid_session_v1';
 const API_BASE = ''; // same-origin
 const BOT_USERNAME = 'thefirstiraqbot';
 let pendingReveal = null;
 let pollTimer = null;
-let verifiedUserId = sessionStorage.getItem(SESSION_USER_KEY) || null;
+let verifiedUserId = localStorage.getItem(SESSION_USER_KEY) || null;
 
 function requestUnlock(revealFn){
   pendingReveal = revealFn;
@@ -312,7 +315,7 @@ async function silentReverify(){
       if(pendingReveal){ pendingReveal(); pendingReveal = null; }
     } else {
       verifiedUserId = null;
-      sessionStorage.removeItem(SESSION_USER_KEY);
+      localStorage.removeItem(SESSION_USER_KEY);
       openLockModal();
     }
   } catch(e){
@@ -329,7 +332,7 @@ async function silentReverify(){
 const PENDING_SESSION_KEY = 'awael_pending_session_v1';
 
 async function checkPendingSessionOnLoad(){
-  const sid = sessionStorage.getItem(PENDING_SESSION_KEY);
+  const sid = localStorage.getItem(PENDING_SESSION_KEY);
   if(!sid) return;
   try{
     const res = await fetch(`${API_BASE}/api/session-status?sid=${sid}`);
@@ -337,15 +340,15 @@ async function checkPendingSessionOnLoad(){
     const data = await res.json();
     if(data.status === 'subscribed'){
       verifiedUserId = data.userId;
-      sessionStorage.setItem(SESSION_USER_KEY, String(data.userId));
-      sessionStorage.removeItem(PENDING_SESSION_KEY);
+      localStorage.setItem(SESSION_USER_KEY, String(data.userId));
+      localStorage.removeItem(PENDING_SESSION_KEY);
       if(pendingReveal){
         // The lock modal is likely still open (or was reopened after reload) — unlock it directly.
         document.getElementById('lockModal').classList.add('hidden');
         pendingReveal(); pendingReveal = null;
       }
     } else if(data.status === 'missing'){
-      sessionStorage.removeItem(PENDING_SESSION_KEY);
+      localStorage.removeItem(PENDING_SESSION_KEY);
     }
     // status 'pending' -> leave the marker, we'll check again next load/visibility change
   } catch(e){ /* network hiccup — just try again next time */ }
@@ -372,7 +375,7 @@ async function startBotVerification(){
   try{
     const res = await fetch(`${API_BASE}/api/create-session`, { method:'POST' });
     const { sessionId } = await res.json();
-    sessionStorage.setItem(PENDING_SESSION_KEY, sessionId); // survives a reload while we're away in Telegram
+    localStorage.setItem(PENDING_SESSION_KEY, sessionId); // survives a reload while we're away in Telegram
 
     const deepLink = `https://t.me/${BOT_USERNAME}?start=${sessionId}`;
     if(botWindow){ botWindow.location.href = deepLink; }
@@ -410,8 +413,8 @@ async function pollSessionOnce(sessionId){
       clearInterval(pollTimer);
       activePollSessionId = null;
       verifiedUserId = sdata.userId;
-      sessionStorage.setItem(SESSION_USER_KEY, String(sdata.userId));
-      sessionStorage.removeItem(PENDING_SESSION_KEY);
+      localStorage.setItem(SESSION_USER_KEY, String(sdata.userId));
+      localStorage.removeItem(PENDING_SESSION_KEY);
       statusEl.innerHTML = `<span class="text-emerald-400">✓ تم التحقق، أنت مشترك بالقناة!</span>`;
       setTimeout(()=>{
         document.getElementById('lockModal').classList.add('hidden');
@@ -421,7 +424,7 @@ async function pollSessionOnce(sessionId){
     } else if(sdata.status === 'missing'){
       clearInterval(pollTimer);
       activePollSessionId = null;
-      sessionStorage.removeItem(PENDING_SESSION_KEY);
+      localStorage.removeItem(PENDING_SESSION_KEY);
       const namesMap = {'@wezaryataa':'قناة وزاري التعليمية'};
       const missingNames = (sdata.missing || []).map(m => namesMap[m] || m).join('، ');
       statusEl.innerHTML = `<span class="text-amber-400">لسا ناقصك: ${missingNames || 'القناة'}. اشترك وبعدين دوس الزر من جديد.</span>`;
