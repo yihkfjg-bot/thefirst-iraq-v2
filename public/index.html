@@ -310,6 +310,13 @@ async function silentReverify(){
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ userId: verifiedUserId })
     });
+    if(res.status === 503){
+      // Telegram's API had a temporary hiccup on the server side — this is NOT
+      // "you're unsubscribed". Don't wipe their verification or show the lock
+      // modal; just reveal optimistically since they were verified before.
+      if(pendingReveal){ pendingReveal(); pendingReveal = null; }
+      return;
+    }
     const data = await res.json();
     if(res.ok && data.subscribed){
       if(pendingReveal){ pendingReveal(); pendingReveal = null; }
@@ -319,7 +326,9 @@ async function silentReverify(){
       openLockModal();
     }
   } catch(e){
-    openLockModal();
+    // Network hiccup reaching our own server — same idea, don't punish the
+    // person for something that isn't a real "unsubscribed" result.
+    if(pendingReveal){ pendingReveal(); pendingReveal = null; }
   }
 }
 
